@@ -5,8 +5,8 @@
 
 local M = {}
 
-local PAL_W = 760
-local PAL_H = 500
+local PAL_W = 780
+local PAL_H = 560
 
 local winTags   = nil
 local webview   = nil
@@ -287,21 +287,41 @@ local function blocksToCSS(blocks)
     return table.concat(parts, "\n")
 end
 
+local function readConfig()
+    local f = io.open(os.getenv("HOME") .. "/.hammerspoon/config.lua", "r")
+    if not f then return "-- config.lua not found" end
+    local s = f:read("*a")
+    f:close()
+    -- Escape for embedding in HTML JS string
+    s = s:gsub("\\", "\\\\"):gsub("`", "\\`"):gsub("$", "\\$")
+    return s
+end
+
 local function buildHTML()
     local tiles = {}
     for _, layout in ipairs(LAYOUTS) do
         local preview = blocksToCSS(layout.blocks)
-        -- Divider line between LG and Mi in preview
-        local divider = '<div style="position:absolute;left:53%;top:0;width:1px;height:100%;background:rgba(255,255,255,0.2);"></div>'
+        local divider = '<div style="position:absolute;left:53%%;top:0;width:1px;height:100%%;background:rgba(255,255,255,0.2);"></div>'
         table.insert(tiles, string.format([[
 <div class="tile" onclick="webkit.messageHandlers.palette.postMessage({path:'layout?id=%s'})">
-  <div class="preview">
-    %s
-    %s
-  </div>
+  <div class="preview">%s%s</div>
   <div class="label">%s</div>
   <div class="desc">%s</div>
 </div>]], layout.id, divider, preview, layout.label, layout.desc))
+    end
+
+    local configContent = readConfig()
+
+    -- Build app dropdown options from /Applications
+    local appOptions = {}
+    local handle = io.popen("find /Applications -maxdepth 2 -name '*.app' | sed 's|.*/||;s|\\.app$||' | sort 2>/dev/null")
+    if handle then
+        for name in handle:lines() do
+            if name ~= "" then
+                table.insert(appOptions, string.format('<option value="%s">%s</option>', name, name))
+            end
+        end
+        handle:close()
     end
 
     return string.format([[<!DOCTYPE html>
@@ -315,7 +335,6 @@ local function buildHTML()
     color: #fff;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 13px;
-    user-select: none;
     overflow: hidden;
     height: 100vh;
     display: flex;
@@ -336,18 +355,43 @@ local function buildHTML()
   .subtitle { font-size: 10px; color: #888; margin-top: 2px; }
   .header-btns { display: flex; gap: 8px; -webkit-app-region: no-drag; }
   .btn {
-    padding: 4px 12px;
-    border-radius: 6px;
-    border: none;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    color: #fff;
+    padding: 4px 12px; border-radius: 6px; border: none;
+    font-size: 11px; font-weight: 600; cursor: pointer; color: #fff;
   }
   .btn-reset  { background: #c47a1a; }
-  .btn-reset:hover  { background: #d88c20; }
+  .btn-reset:hover { background: #d88c20; }
   .btn-close  { background: #c0392b; }
-  .btn-close:hover  { background: #d44; }
+  .btn-close:hover { background: #d44; }
+  .btn-save   { background: #1a7a4a; }
+  .btn-save:hover { background: #20963c; }
+  .btn-reload { background: #3a5a9a; }
+  .btn-reload:hover { background: #4a6ab0; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    background: #12121a;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+    -webkit-app-region: no-drag;
+  }
+  .tab {
+    padding: 7px 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #666;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    user-select: none;
+  }
+  .tab.active { color: #7ab8ff; border-bottom-color: #7ab8ff; }
+  .tab:hover:not(.active) { color: #aaa; }
+
+  /* Panels */
+  .panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+  .panel.active { display: flex; }
+
+  /* Layout grid */
   .grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -365,12 +409,9 @@ local function buildHTML()
     transition: background 0.15s, border-color 0.15s, transform 0.1s;
     display: flex;
     flex-direction: column;
+    user-select: none;
   }
-  .tile:hover {
-    background: #2a3a5a;
-    border-color: #4a7fd4;
-    transform: scale(1.02);
-  }
+  .tile:hover { background: #2a3a5a; border-color: #4a7fd4; transform: scale(1.02); }
   .tile:active { transform: scale(0.98); background: #1e3060; }
   .preview {
     position: relative;
@@ -384,9 +425,62 @@ local function buildHTML()
   }
   .label { font-size: 11px; font-weight: 700; color: #eee; text-align: center; }
   .desc  { font-size: 9px; color: #777; text-align: center; margin-top: 2px; }
+
+  /* Config editor */
+  .editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #12121a;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .editor-toolbar span { font-size: 10px; color: #666; margin-left: auto; }
+  .app-select {
+    background: #22222e;
+    color: #c8d0e0;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px;
+    font-size: 11px;
+    padding: 4px 8px;
+    cursor: pointer;
+    outline: none;
+    max-width: 200px;
+  }
+  .app-select:focus { border-color: #4a7fd4; }
+  #configEditor {
+    flex: 1;
+    background: #0d0d14;
+    color: #c8d0e0;
+    font-family: "SF Mono", "Menlo", "Monaco", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 12px 14px;
+    border: none;
+    outline: none;
+    resize: none;
+    tab-size: 4;
+    white-space: pre;
+    overflow: auto;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .status-bar {
+    padding: 4px 14px;
+    font-size: 10px;
+    color: #555;
+    background: #0a0a10;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    flex-shrink: 0;
+  }
+  .status-bar.ok  { color: #2db87a; }
+  .status-bar.err { color: #e05555; }
 </style>
 </head>
 <body>
+
 <div class="header">
   <div class="header-left">
     <div class="title">Layout Palette</div>
@@ -397,16 +491,97 @@ local function buildHTML()
     <button class="btn btn-close" onclick="webkit.messageHandlers.palette.postMessage({path:'palette?action=close'})">Close</button>
   </div>
 </div>
-<div class="grid">
-%s
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('layouts')">Layouts</div>
+  <div class="tab" onclick="switchTab('config')">config.lua</div>
 </div>
+
+<!-- Layouts panel -->
+<div class="panel active" id="panel-layouts">
+  <div class="grid">%s</div>
+</div>
+
+<!-- Config editor panel -->
+<div class="panel" id="panel-config">
+  <div class="editor-toolbar">
+    <button class="btn btn-save" onclick="saveConfig()">Save</button>
+    <button class="btn btn-reload" onclick="saveAndReload()">Save &amp; Reload</button>
+    <select class="app-select" id="appPicker" onchange="insertApp(this)">
+      <option value="">⌥ Insert app name...</option>
+      %s
+    </select>
+    <span id="editorHint">⌘S save · ⌘⇧S save &amp; reload</span>
+  </div>
+  <textarea id="configEditor" spellcheck="false">%s</textarea>
+  <div class="status-bar" id="statusBar">Ready</div>
+</div>
+
+<script>
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(function(t, i) {
+      t.classList.toggle('active', ['layouts','config'][i] === name);
+    });
+    document.querySelectorAll('.panel').forEach(function(p) {
+      p.classList.remove('active');
+    });
+    document.getElementById('panel-' + name).classList.add('active');
+  }
+
+  function saveConfig() {
+    var content = document.getElementById('configEditor').value;
+    webkit.messageHandlers.palette.postMessage({path: 'config?action=save', content: content});
+    setStatus('Saved', 'ok');
+  }
+
+  function saveAndReload() {
+    var content = document.getElementById('configEditor').value;
+    webkit.messageHandlers.palette.postMessage({path: 'config?action=reload', content: content});
+    setStatus('Saved & reloading...', 'ok');
+  }
+
+  function setStatus(msg, cls) {
+    var bar = document.getElementById('statusBar');
+    bar.textContent = msg;
+    bar.className = 'status-bar ' + (cls || '');
+  }
+
+  function insertApp(sel) {
+    var name = sel.value;
+    sel.value = '';
+    if (!name) return;
+    var el = document.getElementById('configEditor');
+    el.focus();
+    var s = el.selectionStart, e = el.selectionEnd;
+    var insert = '"' + name + '"';
+    el.value = el.value.substring(0, s) + insert + el.value.substring(e);
+    el.selectionStart = el.selectionEnd = s + insert.length;
+  }
+
+  // Cmd+S to save
+  document.addEventListener('keydown', function(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      if (!document.getElementById('panel-config').classList.contains('active')) return;
+      if (e.shiftKey) { saveAndReload(); } else { saveConfig(); }
+    }
+    // Tab key inserts spaces in editor
+    if (e.key === 'Tab' && document.activeElement.id === 'configEditor') {
+      e.preventDefault();
+      var el = document.activeElement;
+      var s = el.selectionStart, en = el.selectionEnd;
+      el.value = el.value.substring(0, s) + '    ' + el.value.substring(en);
+      el.selectionStart = el.selectionEnd = s + 4;
+    }
+  });
+</script>
 </body>
-</html>]], table.concat(tiles, "\n"))
+</html>]], table.concat(tiles, "\n"), table.concat(appOptions, "\n"), configContent)
 end
 
 -- ── URL handler ───────────────────────────────────────────────
 
-local function handleURL(url)
+local function handleURL(url, content)
     local str = tostring(url)
 
     if str:find("palette%?action=close") then
@@ -417,6 +592,21 @@ local function handleURL(url)
     if str:find("palette%?action=reset") then
         if winTags then winTags.reset() end
         hs.alert.show("Tags cleared")
+        return true
+    end
+
+    if str:find("config%?action=save") or str:find("config%?action=reload") then
+        if content and content ~= "" then
+            local path = os.getenv("HOME") .. "/.hammerspoon/config.lua"
+            local f = io.open(path, "w")
+            if f then
+                f:write(content)
+                f:close()
+                if str:find("reload") then
+                    hs.timer.doAfter(0.3, function() hs.reload() end)
+                end
+            end
+        end
         return true
     end
 
@@ -456,9 +646,9 @@ function M.show()
     usercontent:setCallback(function(msg)
         local body = msg.body
         if type(body) == "table" then
-            handleURL("hammerspoon://" .. (body.path or ""))
+            handleURL("hammerspoon://" .. (body.path or ""), body.content)
         elseif type(body) == "string" then
-            handleURL("hammerspoon://" .. body)
+            handleURL("hammerspoon://" .. body, nil)
         end
     end)
     webview = hs.webview.new(pf, { developerExtrasEnabled = false }, usercontent)
