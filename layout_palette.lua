@@ -188,34 +188,115 @@ local LAYOUTS = {
         end,
     },
     {
-        id    = "stack",
-        label = "Stack · 3 Right",
-        desc  = "2 stacked + sidebar · 3 cols",
+        id    = "overview",
+        label = "Overview",
+        desc  = "All windows tiled on LG · click to tag",
         blocks = {
-            { s="L", x=0,    y=0,    w=0.67, h=0.5, c="main" },
-            { s="L", x=0,    y=0.5,  w=0.67, h=0.5, c="b" },
-            { s="L", x=0.67, y=0,    w=0.33, h=1,   c="c" },
-            { s="R", x=0,    y=0, w=0.33, h=1, c="b" },
-            { s="R", x=0.33, y=0, w=0.34, h=1, c="c" },
-            { s="R", x=0.67, y=0, w=0.33, h=1, c="b" },
+            { s="L", x=0,    y=0,    w=0.33, h=0.5, c="main" },
+            { s="L", x=0.33, y=0,    w=0.34, h=0.5, c="b" },
+            { s="L", x=0.67, y=0,    w=0.33, h=0.5, c="c" },
+            { s="L", x=0,    y=0.5,  w=0.33, h=0.5, c="b" },
+            { s="L", x=0.33, y=0.5,  w=0.34, h=0.5, c="c" },
+            { s="L", x=0.67, y=0.5,  w=0.33, h=0.5, c="main" },
         },
         apply = function(wins)
             local lg, mi = getScreenFrames()
             if not lg or not mi then return end
-            local mw = math.floor(lg.w * 2/3)
-            local hh = math.floor(lg.h / 2)
-            snapWin(wins[1], {x=lg.x,     y=lg.y,    w=mw,        h=hh})
-            snapWin(wins[2], {x=lg.x,     y=lg.y+hh, w=mw,        h=lg.h-hh})
-            snapWin(wins[3], {x=lg.x+mw,  y=lg.y,    w=lg.w-mw,   h=lg.h})
-            local rest = {}
-            for i = 4, #wins do table.insert(rest, wins[i]) end
-            local n = #rest
-            for i, win in ipairs(rest) do
-                local cw = math.floor(mi.w / math.max(n,1))
-                local x = mi.x + (i-1)*cw
-                local w = (i==n) and (mi.x+mi.w-x) or cw
-                snapWin(win, {x=x, y=mi.y, w=w, h=mi.h})
+            -- Tile all windows in a grid on LG so you can see and tag them
+            local n = #wins
+            if n == 0 then return end
+            -- Pick cols/rows to make a roughly square grid
+            local cols = math.ceil(math.sqrt(n))
+            local rows = math.ceil(n / cols)
+            local cw = math.floor(lg.w / cols)
+            local rh = math.floor(lg.h / rows)
+            for i, win in ipairs(wins) do
+                local col = (i - 1) % cols
+                local row = math.floor((i - 1) / cols)
+                local x = lg.x + col * cw
+                local w = (col == cols - 1) and (lg.x + lg.w - x) or cw
+                local y = lg.y + row * rh
+                local h = (row == rows - 1) and (lg.y + lg.h - y) or rh
+                snapWin(win, {x=x, y=y, w=w, h=h})
             end
+            hs.alert.show("Overview — " .. n .. " windows tiled\nTag the ones you want, then pick a layout", 3)
+        end,
+    },
+    {
+        id    = "twobigs",
+        label = "2 Bigs",
+        desc  = "1 full per monitor",
+        blocks = {
+            { s="L", x=0, y=0, w=1, h=1, c="main" },
+            { s="R", x=0, y=0, w=1, h=1, c="b" },
+        },
+        apply = function(wins)
+            local lg, mi = getScreenFrames()
+            if not lg or not mi then return end
+            snapWin(wins[1], lg)
+            snapWin(wins[2], mi)
+        end,
+    },
+    {
+        id    = "production",
+        label = "Production",
+        desc  = "LG full · Mi ½ + ¼ + ¼",
+        blocks = {
+            { s="L", x=0,    y=0, w=1,    h=1, c="main" },
+            { s="R", x=0,    y=0, w=0.50, h=1, c="main" },
+            { s="R", x=0.50, y=0, w=0.25, h=1, c="b" },
+            { s="R", x=0.75, y=0, w=0.25, h=1, c="c" },
+        },
+        apply = function(wins)
+            local lg, mi = getScreenFrames()
+            if not lg or not mi then return end
+            -- First window gets full LG, rest go to Mi as ½ + ¼ + ¼
+            snapWin(wins[1], lg)
+            local rest = {}
+            for i = 2, #wins do table.insert(rest, wins[i]) end
+            local n = #rest; if n == 0 then return end
+            local mainW  = math.floor(mi.w / 2)
+            local sliceW = math.floor((mi.w - mainW) / math.max(n - 1, 1))
+            snapWin(rest[1], {x=mi.x, y=mi.y, w=mainW, h=mi.h})
+            for i = 2, n do
+                local x = mi.x + mainW + (i - 2) * sliceW
+                local w = (i == n) and (mi.x + mi.w - x) or sliceW
+                snapWin(rest[i], {x=x, y=mi.y, w=w, h=mi.h})
+            end
+        end,
+    },
+    {
+        id    = "morningcoffee",
+        label = "Morning Coffee",
+        desc  = "½ · ¼ · ¼ per monitor",
+        blocks = {
+            { s="L", x=0,    y=0, w=0.50, h=1, c="main" },
+            { s="L", x=0.50, y=0, w=0.25, h=1, c="b" },
+            { s="L", x=0.75, y=0, w=0.25, h=1, c="c" },
+            { s="R", x=0,    y=0, w=0.50, h=1, c="main" },
+            { s="R", x=0.50, y=0, w=0.25, h=1, c="b" },
+            { s="R", x=0.75, y=0, w=0.25, h=1, c="c" },
+        },
+        apply = function(wins)
+            local lg, mi = getScreenFrames()
+            if not lg or not mi then return end
+            local half = math.ceil(#wins / 2)
+            local lgW, miW = {}, {}
+            for i, w in ipairs(wins) do
+                if i <= half then table.insert(lgW, w) else table.insert(miW, w) end
+            end
+            local function snap(group, F)
+                local n = #group; if n == 0 then return end
+                local mainW  = math.floor(F.w / 2)
+                local sliceW = math.floor((F.w - mainW) / math.max(n - 1, 1))
+                snapWin(group[1], {x=F.x, y=F.y, w=mainW, h=F.h})
+                for i = 2, n do
+                    local x = F.x + mainW + (i - 2) * sliceW
+                    local w = (i == n) and (F.x + F.w - x) or sliceW
+                    snapWin(group[i], {x=x, y=F.y, w=w, h=F.h})
+                end
+            end
+            snap(lgW, lg); snap(miW, mi)
         end,
     },
     {
