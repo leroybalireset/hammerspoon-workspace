@@ -199,27 +199,46 @@ local LAYOUTS = {
             { s="L", x=0.33, y=0.5,  w=0.34, h=0.5, c="c" },
             { s="L", x=0.67, y=0.5,  w=0.33, h=0.5, c="main" },
         },
-        apply = function(wins)
+        apply = function(_)
             local lg, mi = getScreenFrames()
             if not lg or not mi then return end
-            -- Tile all windows in a grid on LG so you can see and tag them
+            -- Always ALL visible windows on BOTH monitors
+            local wins = {}
+            for _, win in ipairs(hs.window.orderedWindows()) do
+                if win:isStandard() and not win:isMinimized() then
+                    table.insert(wins, win)
+                end
+            end
             local n = #wins
-            if n == 0 then return end
-            -- Pick cols/rows to make a roughly square grid
-            local cols = math.ceil(math.sqrt(n))
+            if n == 0 then hs.alert.show("No open windows"); return end
+
+            -- Square-ish grid — more cols than rows for widescreen
+            local cols = math.ceil(math.sqrt(n * 1.4))  -- bias toward more columns
             local rows = math.ceil(n / cols)
-            local cw = math.floor(lg.w / cols)
-            local rh = math.floor(lg.h / rows)
+            -- Each cell is exactly equal — integer pixel widths
+            local cellW = math.floor(lg.w / cols)
+            local cellH = math.floor(lg.h / rows)
+
+            local function forceFrame(win, f)
+                if win:isMinimized() then win:unminimize() end
+                local r = hs.geometry.rect(f.x, f.y, f.w, f.h)
+                win:setFrame(r, 0)
+                -- Second set forces apps that resist first resize (Chrome, Electron)
+                hs.timer.doAfter(0.15, function() win:setFrame(r, 0) end)
+            end
+
             for i, win in ipairs(wins) do
                 local col = (i - 1) % cols
                 local row = math.floor((i - 1) / cols)
-                local x = lg.x + col * cw
-                local w = (col == cols - 1) and (lg.x + lg.w - x) or cw
-                local y = lg.y + row * rh
-                local h = (row == rows - 1) and (lg.y + lg.h - y) or rh
-                snapWin(win, {x=x, y=y, w=w, h=h})
+                -- Last col/row absorbs any rounding remainder so grid fills exactly
+                local x = lg.x + col * cellW
+                local y = lg.y + row * cellH
+                local w = (col == cols - 1) and (lg.x + lg.w - x) or cellW
+                local h = (row == rows - 1) and (lg.y + lg.h - y) or cellH
+                forceFrame(win, {x=x, y=y, w=w, h=h})
             end
-            hs.alert.show("Overview — " .. n .. " windows tiled\nTag the ones you want, then pick a layout", 3)
+
+            hs.alert.show("Overview — " .. n .. " windows in " .. cols .. "×" .. rows .. " grid\nF4 to tag · then pick a layout", 3)
         end,
     },
     {
@@ -366,6 +385,95 @@ local function blocksToCSS(blocks)
         ))
     end
     return table.concat(parts, "\n")
+end
+
+-- ── Window snapshot grid ──────────────────────────────────────
+
+local snapshotDir = os.getenv("HOME") .. "/.hammerspoon/.snapshots"
+os.execute("mkdir -p " .. snapshotDir)
+
+local mainHTML = nil  -- cached main palette HTML
+
+local function getVisibleWindows()
+    local wins = {}
+    for _, win in ipairs(hs.window.orderedWindows()) do
+        if win:isStandard() and not win:isMinimized() then
+            table.insert(wins, win)
+        end
+    end
+    return wins
+end
+
+local function jsEscape(s)
+    -- Escape a string for embedding inside a JS single-quoted string
+    s = s:gsub("\\", "\\\\")
+    s = s:gsub("'", "\\'")
+    s = s:gsub("\n", "\\n")
+    s = s:gsub("\r", "")
+    return s
+end
+
+local function showWindowsTab()
+    if not webview then return end
+    local wins = getVisibleWindows()
+
+    -- Step 1: inject placeholder tiles and switch tab
+    local skeletonTiles = {}
+    for _, win in ipairs(wins) do
+        local wid = win:id()
+        local title = win:title() or ""
+        if #title > 28 then title = title:sub(1,25) .. "…" end
+        local appName = (win:application() and win:application():name()) or ""
+        table.insert(skeletonTiles, string.format(
+            "{'wid':%d,'app':'%s','title':'%s'}",
+            wid, jsEscape(appName), jsEscape(title)
+        ))
+    end
+
+    local skeletonJS = string.format([[
+        (function(){
+            var grid = document.getElementById('snap-grid-inner');
+            if (!grid) return;
+            var items = [%s];
+            var html = '';
+            for (var i=0; i<items.length; i++) {
+                var it = items[i];
+                html += '<div class="snap-tile" id="tile-'+it.wid+'" onclick="tagWin('+it.wid+',this)">'
+                      + '<div class="snap-img" id="img-'+it.wid+'"><span style="font-size:10px;color:#555">Loading...</span></div>'
+                      + '<div class="snap-app">'+it.app+'</div>'
+                      + '<div class="snap-title">'+it.title+'</div>'
+                      + '<div class="snap-badge" id="badge-'+it.wid+'"></div>'
+                      + '</div>';
+            }
+            grid.innerHTML = html;
+            switchTab('windows');
+        })();
+    ]], table.concat(skeletonTiles, ","))
+
+    webview:evaluateJavaScript(skeletonJS, nil)
+
+    -- Step 2: inject each image one at a time with a short delay
+    for i, win in ipairs(wins) do
+        local wid = win:id()
+        hs.timer.doAfter(i * 0.08, function()
+            if not webview then return end
+            local ok, snap = pcall(function() return win:snapshot() end)
+            if ok and snap then
+                local thumb = snap:setSize(hs.geometry.size(240, 150))
+                local dataURL = thumb:encodeAsURLString(false, "JPEG")
+                if dataURL and #dataURL > 0 then
+                    local imgJS = string.format([[
+                        (function(){
+                            var box = document.getElementById('img-%d');
+                            if (!box) return;
+                            box.innerHTML = '<img src="%s" draggable="false" style="width:100%%;height:100%%;object-fit:cover;object-position:top left;display:block;">';
+                        })();
+                    ]], wid, dataURL)
+                    webview:evaluateJavaScript(imgJS, nil)
+                end
+            end
+        end)
+    end
 end
 
 local function readConfig()
@@ -558,6 +666,75 @@ local function buildHTML()
   }
   .status-bar.ok  { color: #2db87a; }
   .status-bar.err { color: #e05555; }
+
+  /* Window snapshot grid */
+  .snap-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+    padding: 10px 12px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .snap-tile {
+    background: #1e1e2a;
+    border: 2px solid rgba(255,255,255,0.08);
+    border-radius: 7px;
+    cursor: pointer;
+    overflow: hidden;
+    position: relative;
+    transition: border-color 0.15s, transform 0.1s;
+    display: flex;
+    flex-direction: column;
+  }
+  .snap-tile:hover { border-color: #4a7fd4; transform: scale(1.03); }
+  .snap-tile.tagged { border-color: #2db87a; }
+  .snap-img {
+    width: 100%%;
+    height: 90px;
+    background: #0d0d1a;
+    border-radius: 5px 5px 0 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .snap-img img {
+    width: 100%%;
+    height: 100%%;
+    object-fit: cover;
+    object-position: top left;
+    display: block;
+  }
+  .snap-loading { font-size: 20px; opacity: 0.4; }
+  .snap-app  { font-size: 10px; font-weight: 700; color: #7ab8ff; padding: 4px 6px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .snap-title { font-size: 9px; color: #888; padding: 1px 6px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .snap-badge {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 22px; height: 22px;
+    border-radius: 50%%;
+    background: #2db87a;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #fff;
+  }
+  .snap-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #12121a;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+    font-size: 10px;
+    color: #666;
+  }
 </style>
 </head>
 <body>
@@ -575,12 +752,25 @@ local function buildHTML()
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab('layouts')">Layouts</div>
+  <div class="tab" onclick="webkit.messageHandlers.palette.postMessage({path:'window?action=opentab'})">Windows</div>
   <div class="tab" onclick="switchTab('config')">config.lua</div>
 </div>
 
 <!-- Layouts panel -->
 <div class="panel active" id="panel-layouts">
   <div class="grid">%s</div>
+</div>
+
+<!-- Window snapshots panel -->
+<div class="panel" id="panel-windows">
+  <div class="snap-toolbar">
+    Click to tag · double-click to remove · switch to Layouts to apply
+    <button class="btn btn-reset" style="margin-left:auto;font-size:10px;padding:3px 10px" onclick="webkit.messageHandlers.palette.postMessage({path:'palette?action=reset'})">Clear Tags</button>
+    <button class="btn btn-reload" style="font-size:10px;padding:3px 10px" onclick="refreshSnapshots()">Refresh</button>
+  </div>
+  <div class="snap-grid" id="snap-grid-inner">
+    <div style="color:#555;font-size:12px;padding:20px;grid-column:1/-1;text-align:center">Loading windows…</div>
+  </div>
 </div>
 
 <!-- Config editor panel -->
@@ -599,14 +789,85 @@ local function buildHTML()
 </div>
 
 <script>
+  function setSnapshot(wid, dataUrl) {
+    var box = document.getElementById('img-' + wid);
+    if (!box) return;
+    var img = document.createElement('img');
+    img.src = dataUrl;
+    img.draggable = false;
+    box.innerHTML = '';
+    box.appendChild(img);
+  }
+  function setError(wid) {
+    var box = document.getElementById('img-' + wid);
+    if (box) box.innerHTML = '<div class="snap-loading" style="font-size:11px;color:#555">No preview</div>';
+  }
+
+  var tabNames = ['layouts','windows','config'];
   function switchTab(name) {
     document.querySelectorAll('.tab').forEach(function(t, i) {
-      t.classList.toggle('active', ['layouts','config'][i] === name);
+      t.classList.toggle('active', tabNames[i] === name);
     });
     document.querySelectorAll('.panel').forEach(function(p) {
       p.classList.remove('active');
     });
     document.getElementById('panel-' + name).classList.add('active');
+  }
+
+  // Window tagging via snapshots
+  var tagOrder = [];  // [{wid, el}]
+  var lastTap = {wid: null, t: 0};
+
+  function tagWin(wid, el) {
+    var now = Date.now();
+    // Double-click = remove tag
+    if (lastTap.wid === wid && (now - lastTap.t) < 400) {
+      removeTag(wid, el);
+      lastTap = {wid: null, t: 0};
+      return;
+    }
+    lastTap = {wid: wid, t: now};
+
+    // Already tagged — ignore single click
+    for (var i = 0; i < tagOrder.length; i++) {
+      if (tagOrder[i].wid === wid) return;
+    }
+
+    tagOrder.push({wid: wid, el: el});
+    var n = tagOrder.length;
+    var badge = document.getElementById('badge-' + wid);
+    badge.textContent = n;
+    badge.style.display = 'flex';
+    el.classList.add('tagged');
+
+    webkit.messageHandlers.palette.postMessage({path: 'window?action=tag&wid=' + wid});
+  }
+
+  function removeTag(wid, el) {
+    tagOrder = tagOrder.filter(function(t) { return t.wid !== wid; });
+    var badge = document.getElementById('badge-' + wid);
+    badge.style.display = 'none';
+    el.classList.remove('tagged');
+    // Resequence remaining badges
+    tagOrder.forEach(function(t, i) {
+      var b = document.getElementById('badge-' + t.wid);
+      b.textContent = i + 1;
+    });
+    webkit.messageHandlers.palette.postMessage({path: 'window?action=untag&wid=' + wid});
+  }
+
+  function clearBadges() {
+    tagOrder = [];
+    document.querySelectorAll('.snap-tile').forEach(function(el) {
+      el.classList.remove('tagged');
+    });
+    document.querySelectorAll('.snap-badge').forEach(function(b) {
+      b.style.display = 'none';
+    });
+  }
+
+  function refreshSnapshots() {
+    webkit.messageHandlers.palette.postMessage({path: 'window?action=refresh'});
   }
 
   function saveConfig() {
@@ -676,6 +937,22 @@ local function handleURL(url, content)
         return true
     end
 
+    -- Window snapshot panel: tag/untag/refresh/opentab
+    local winAction = str:match("window%%3Faction=(%w+)") or str:match("window%?action=(%w+)")
+    if winAction then
+        local widStr = str:match("wid=(%d+)")
+        local wid = widStr and tonumber(widStr)
+        if winAction == "opentab" or winAction == "refresh" then
+            hs.timer.doAfter(0.05, showWindowsTab)
+        elseif winAction == "tag" and wid and winTags then
+            local win = hs.window.get(wid)
+            if win then winTags.tagWindowById(wid) end
+        elseif winAction == "untag" and wid and winTags then
+            winTags.untagWindowById(wid)
+        end
+        return true
+    end
+
     if str:find("config%?action=save") or str:find("config%?action=reload") then
         if content and content ~= "" then
             local path = os.getenv("HOME") .. "/.hammerspoon/config.lua"
@@ -738,7 +1015,8 @@ function M.show()
     webview:allowMagnificationGestures(false)
     webview:allowNewWindows(false)
     webview:level(hs.canvas.windowLevels.floating + 2)
-    webview:html(buildHTML())
+    mainHTML = buildHTML()
+    webview:html(mainHTML)
     webview:show()
     visible = true
 end

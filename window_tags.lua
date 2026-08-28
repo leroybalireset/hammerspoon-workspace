@@ -255,6 +255,34 @@ function M.hasTagged()
     return tagCount() > 0
 end
 
+function M.tagWindowById(wid)
+    if tags[wid] then return end
+    local win = hs.window.get(wid)
+    if not win then return end
+    local n = nextTag()
+    tags[wid] = n
+    destroyBadge(wid)
+    badges[wid] = makeBadge(win, n)
+end
+
+function M.untagWindowById(wid)
+    if not tags[wid] then return end
+    local removed = tags[wid]
+    tags[wid] = nil
+    destroyBadge(wid)
+    -- Resequence
+    local ordered = {}
+    for id, n in pairs(tags) do table.insert(ordered, {id=id, n=n}) end
+    table.sort(ordered, function(a,b) return a.n < b.n end)
+    tags = {}
+    for i, entry in ipairs(ordered) do
+        tags[entry.id] = i
+        destroyBadge(entry.id)
+        local w = hs.window.get(entry.id)
+        if w then badges[entry.id] = makeBadge(w, i) end
+    end
+end
+
 -- Keep badges updated even when tag mode is off (windows move)
 posTimer = hs.timer.doEvery(UPDATE_HZ, updatePositions)
 

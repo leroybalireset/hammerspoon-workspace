@@ -1,6 +1,6 @@
 # Hammerspoon Workspace Manager
 
-A powerful dual-monitor window management system for macOS built with [Hammerspoon](https://www.hammerspoon.org/). Designed for a two-monitor setup but gracefully handles single-monitor use.
+A powerful dual-monitor window management system for macOS built with [Hammerspoon](https://www.hammerspoon.org/). Designed for a two-monitor setup (LG + Mi) but gracefully handles single-monitor use.
 
 ## Features
 
@@ -11,28 +11,42 @@ A powerful dual-monitor window management system for macOS built with [Hammerspo
 | `F2` | **Even Split** — each monitor divides itself evenly by however many windows are on it |
 | `F3` | **Focus Split** — ⅔ main window + remaining share the ⅓ |
 | `F4` | **Tag Mode** — click windows to number them (double-click to remove a tag) |
-| `F5` | **Layout Palette** — floating panel with visual layout previews |
+| `F5` | **Layout Palette** — floating panel with visual layout previews + window grid |
 | `F6` | **Reset Tags** — clear all window tags instantly |
 
 ### Window Tagging System
 - Press **F4** to enter tag mode
-- **Click** any window to assign it the next number — a colored badge appears in the top-left
+- **Click** any window to assign it the next number — a colored badge appears in the top-left (offset to avoid traffic light buttons)
 - **Double-click** a tagged window to remove its tag (remaining tags resequence automatically)
 - Press **F4** again to exit tag mode (badges stay visible)
 - Press **F6** to clear all tags
+- Badges float above windows and follow them as you move/resize
 
 ### Layout Palette (F5)
 A floating dark-mode panel showing clickable layout previews with mini dual-monitor diagrams. Tag your windows first, then pick a layout — windows snap into position in tag order.
 
+**Three tabs:**
+- **Layouts** — 9 clickable layouts with visual preview diagrams
+- **Windows** — live thumbnails of every open window; click to tag them in order, then switch to Layouts
+- **config.lua** — live editor with syntax highlighting, Save / Save & Reload, and app name dropdown
+
 **Available layouts:**
-- AI Layout — ½ · ¼ · ¼ | 4 equal
-- Even Split — equal columns per monitor
-- Focus Split — ⅔ main · ⅓ shared
-- LG Full · Mi Split — 1 full left, rest on right
-- Stack · 3 Right — 2 stacked + sidebar | 3 columns
-- Quarters — 4 equal on each monitor
+| Layout | Description |
+|--------|-------------|
+| AI Layout | ½ · ¼ · ¼ on LG, 4 equal on Mi |
+| Even Split | Equal columns per monitor |
+| Focus Split | ⅔ main · ⅓ shared per monitor |
+| LG Full · Mi Split | 1 full left, rest split on right |
+| Overview | All open windows tiled in a grid on LG (dynamic, use then F4 to tag) |
+| 2 Bigs | One full-screen window per monitor |
+| Production | LG full · Mi ½ + ¼ + ¼ |
+| Morning Coffee | ½ + ¼ + ¼ on both monitors |
+| Quarters | 4 equal columns on each monitor |
 
 The palette is draggable by the header bar and positioned bottom-right by default.
+
+### Windows Tab (inside Layout Palette)
+Click the **Windows** tab to see live thumbnails of all open windows. Images load progressively (placeholders appear instantly, then thumbnails fill in). Click a window thumbnail to tag it — badges show the tag order. Switch back to **Layouts** to apply a layout using the tagged order.
 
 ### Slot Hotkeys
 | Key | Action |
@@ -70,7 +84,7 @@ Edit `config.lua` to define named presets. Each preset assigns apps to slots 1�
 cp -r ~/.hammerspoon ~/.hammerspoon.backup
 
 # Clone into your Hammerspoon config directory
-git clone https://github.com/YOUR_USERNAME/hammerspoon-workspace.git ~/.hammerspoon
+git clone https://github.com/leroybalireset/hammerspoon-workspace.git ~/.hammerspoon
 ```
 
 Then open Hammerspoon and click **Reload Config**.
@@ -108,7 +122,7 @@ Edit `config.lua` — add, remove, or rename presets. Each slot takes an app nam
 init.lua            — Main config: hotkeys, screen detection, slot system, AI layout
 config.lua          — User-editable preset definitions
 window_tags.lua     — Window tagging system with floating badge overlays
-layout_palette.lua  — Floating layout picker (webview-based, draggable)
+layout_palette.lua  — Floating layout picker with Windows tab and config editor
 ```
 
 ## License
